@@ -1,0 +1,264 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  PLAYER
+  ADMIN
+}
+
+enum KycStatus {
+  NOT_SUBMITTED
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum TransactionType {
+  DEPOSIT
+  WITHDRAWAL
+  BET
+  WIN
+  ADJUSTMENT
+}
+
+enum TransactionStatus {
+  PENDING
+  COMPLETED
+  FAILED
+  REJECTED
+}
+
+enum LedgerDirection {
+  DEBIT
+  CREDIT
+}
+
+enum GameType {
+  ROULETTE
+  MINES
+  PLINKO
+  BLACKJACK
+  BACCARAT
+  VIDEO_POKER
+}
+
+enum GameStatus {
+  ACTIVE
+  COMPLETED
+  CANCELLED
+}
+
+enum BetStatus {
+  PLACED
+  WON
+  LOST
+  CANCELLED
+}
+
+enum PaymentProvider {
+  MOCK
+}
+
+enum PaymentStatus {
+  PENDING
+  SUCCEEDED
+  FAILED
+}
+
+enum WithdrawalStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  PAID
+}
+
+enum LimitKind {
+  DEPOSIT
+  LOSS
+  SESSION
+}
+
+enum LimitPeriod {
+  DAY
+  WEEK
+  MONTH
+  SESSION
+}
+
+model User {
+  id                 String              @id @default(uuid()) @db.Uuid
+  email              String              @unique
+  passwordHash       String              @map("password_hash")
+  role               UserRole            @default(PLAYER)
+  kycStatus          KycStatus           @default(NOT_SUBMITTED) @map("kyc_status")
+  createdAt          DateTime            @default(now()) @map("created_at")
+  walletAccount      WalletAccount?
+  gameRounds         GameRound[]
+  paymentIntents     PaymentIntent[]
+  withdrawalRequests WithdrawalRequest[]
+  kycProfile         KycProfile?
+  limits             Limit[]
+  selfExclusions     SelfExclusion[]
+  auditLogs          AuditLog[]
+
+  @@map("users")
+}
+
+model WalletAccount {
+  id            String        @id @default(uuid()) @db.Uuid
+  userId        String?       @unique @map("user_id") @db.Uuid
+  systemKey     String?       @unique @map("system_key")
+  realBalance   Decimal       @default(0) @map("real_balance") @db.Decimal(19, 4)
+  bonusBalance  Decimal       @default(0) @map("bonus_balance") @db.Decimal(19, 4)
+  currency      String        @default("EUR") @db.Char(3)
+  version       Int           @default(0)
+  user          User?         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  ledgerEntries LedgerEntry[]
+
+  @@map("wallet_accounts")
+}
+
+model Transaction {
+  id             String            @id @default(uuid()) @db.Uuid
+  type           TransactionType
+  idempotencyKey String            @unique @map("idempotency_key")
+  status         TransactionStatus @default(PENDING)
+  response       Json?
+  createdAt      DateTime          @default(now()) @map("created_at")
+  ledgerEntries  LedgerEntry[]
+
+  @@map("transactions")
+}
+
+model LedgerEntry {
+  id            String          @id @default(uuid()) @db.Uuid
+  accountId     String          @map("account_id") @db.Uuid
+  transactionId String          @map("transaction_id") @db.Uuid
+  direction     LedgerDirection
+  amount        Decimal         @db.Decimal(19, 4)
+  currency      String          @db.Char(3)
+  createdAt     DateTime        @default(now()) @map("created_at")
+  account       WalletAccount   @relation(fields: [accountId], references: [id], onDelete: Restrict)
+  transaction   Transaction     @relation(fields: [transactionId], references: [id], onDelete: Restrict)
+
+  @@index([transactionId])
+  @@map("ledger_entries")
+}
+
+model GameRound {
+  id             String          @id @default(uuid()) @db.Uuid
+  userId         String          @map("user_id") @db.Uuid
+  game           GameType
+  state          Json            @default("{}") @db.JsonB
+  status         GameStatus      @default(ACTIVE)
+  createdAt      DateTime        @default(now()) @map("created_at")
+  user           User            @relation(fields: [userId], references: [id], onDelete: Restrict)
+  bets           Bet[]
+  seedCommitment SeedCommitment?
+
+  @@index([userId, createdAt])
+  @@map("game_rounds")
+}
+
+model Bet {
+  id      String    @id @default(uuid()) @db.Uuid
+  roundId String    @map("round_id") @db.Uuid
+  amount  Decimal   @db.Decimal(19, 4)
+  status  BetStatus @default(PLACED)
+  round   GameRound @relation(fields: [roundId], references: [id], onDelete: Restrict)
+
+  @@index([roundId])
+  @@map("bets")
+}
+
+model SeedCommitment {
+  id             String    @id @default(uuid()) @db.Uuid
+  roundId        String    @unique @map("round_id") @db.Uuid
+  serverSeedHash String    @map("server_seed_hash")
+  serverSeed     String?   @map("server_seed")
+  clientSeed     String    @map("client_seed")
+  nonce          Int       @default(0)
+  round          GameRound @relation(fields: [roundId], references: [id], onDelete: Cascade)
+
+  @@map("seed_commitments")
+}
+
+model PaymentIntent {
+  id             String          @id @default(uuid()) @db.Uuid
+  userId         String          @map("user_id") @db.Uuid
+  idempotencyKey String          @unique @map("idempotency_key")
+  amount         Decimal         @db.Decimal(19, 4)
+  provider       PaymentProvider @default(MOCK)
+  externalId     String?         @unique @map("external_id")
+  status         PaymentStatus   @default(PENDING)
+  user           User            @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@index([userId])
+  @@map("payment_intents")
+}
+
+model WithdrawalRequest {
+  id         String           @id @default(uuid()) @db.Uuid
+  userId     String           @map("user_id") @db.Uuid
+  amount     Decimal          @db.Decimal(19, 4)
+  status     WithdrawalStatus @default(PENDING)
+  reviewedBy String?          @map("reviewed_by") @db.Uuid
+  createdAt  DateTime         @default(now()) @map("created_at")
+  user       User             @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@index([status, createdAt])
+  @@map("withdrawal_requests")
+}
+
+model KycProfile {
+  id          String    @id @default(uuid()) @db.Uuid
+  userId      String    @unique @map("user_id") @db.Uuid
+  status      KycStatus @default(NOT_SUBMITTED)
+  documentRef String?   @map("document_ref")
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("kyc_profiles")
+}
+
+model Limit {
+  id     String      @id @default(uuid()) @db.Uuid
+  userId String      @map("user_id") @db.Uuid
+  kind   LimitKind
+  value  Decimal     @db.Decimal(19, 4)
+  period LimitPeriod
+  user   User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, kind])
+  @@map("limits")
+}
+
+model SelfExclusion {
+  id     String   @id @default(uuid()) @db.Uuid
+  userId String   @map("user_id") @db.Uuid
+  until  DateTime
+  user   User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, until])
+  @@map("self_exclusions")
+}
+
+model AuditLog {
+  id         String   @id @default(uuid()) @db.Uuid
+  actorId    String   @map("actor_id") @db.Uuid
+  action     String
+  targetType String   @map("target_type")
+  targetId   String   @map("target_id")
+  before     Json?
+  after      Json?
+  createdAt  DateTime @default(now()) @map("created_at")
+  actor      User     @relation(fields: [actorId], references: [id], onDelete: Restrict)
+
+  @@index([targetType, targetId])
+  @@map("audit_logs")
+}
