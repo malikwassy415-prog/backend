@@ -26,7 +26,7 @@ process.once("SIGINT", () => void shutdown());
 process.once("SIGTERM", () => void shutdown());
 
 try {
-  await app.listen({ port: Number(process.env.API_PORT ?? 4000), host: process.env.API_HOST ?? "0.0.0.0" });
+  await app.listen({ port: Number(process.env.PORT ?? process.env.API_PORT ?? 4000), host: process.env.API_HOST ?? "0.0.0.0" });
 } catch (error) {
   app.log.error(error);
   await shutdown();
